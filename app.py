@@ -125,7 +125,7 @@ def initialize_models():
     try:
         # Load the trained model
         if st.session_state.model is None:
-            st.session_state.model = tf.keras.models.load_model('gesture_model.keras')
+            st.session_state.model = tf.keras.models.load_model('model')
             st.success("Model loaded successfully")
     except Exception as e:
         st.error(f"Error loading model: {e}")
