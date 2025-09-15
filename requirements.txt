@@ -13,6 +13,6 @@ streamlit==1.49.0
 streamlit-webrtc==0.63.4
 av>=9.0.0
 pyarrow>=6.0.0
-protobuf==3.20.0
+protobuf==3.20.0,<4.21.0
 imbalanced-learn
 mediapipe==0.10.21
