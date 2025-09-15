@@ -16,4 +16,4 @@ pyarrow>=6.0.0
 protobuf>=3.20.0
 imbalanced-learn
 mediapipe==0.10.21
-opencv-contrib-python-headless==4.11.0.86
+opencv-contrib-python
