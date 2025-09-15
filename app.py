@@ -172,28 +172,54 @@ def load_model_with_retry(model_path):
 
 def initialize_models():
     try:
-        # Load the trained model with retry mechanism
         if st.session_state.model is None:
-            model_path = 'gesture_model.keras'
+            # Check which model files are available
+            model_files = []
+            if os.path.exists('gesture_model.keras'):
+                model_files.append(('keras_format', 'gesture_model.keras'))
+            if os.path.exists('gesture_model'):
+                model_files.append(('saved_model', 'gesture_model'))
+            if os.path.exists('gesture_model_weights.h5'):
+                model_files.append(('weights_only', 'gesture_model_weights.h5'))
             
-            # Check if model file exists
-            if not os.path.exists(model_path):
-                st.error(f"Model file '{model_path}' not found")
+            if not model_files:
+                st.error("No model files found. Please ensure model files are in the deployment.")
                 return False
-                
-            st.session_state.model = load_model_with_retry(model_path)
+            
+            # Try loading in order of preference
+            for format_name, model_path in model_files:
+                try:
+                    if format_name == 'keras_format':
+                        st.session_state.model = tf.keras.models.load_model(
+                            model_path, compile=False, safe_mode=False
+                        )
+                    elif format_name == 'saved_model':
+                        st.session_state.model = tf.keras.models.load_model(
+                            model_path, compile=False
+                        )
+                    elif format_name == 'weights_only':
+                        # Create model architecture and load weights
+                        st.session_state.model = create_model_architecture()
+                        st.session_state.model.load_weights(model_path)
+                    
+                    st.success(f"Model loaded successfully from {format_name}")
+                    break
+                    
+                except Exception as e:
+                    st.warning(f"Failed to load from {format_name}: {str(e)}")
+                    continue
             
             if st.session_state.model is None:
                 st.error("All model loading attempts failed")
                 return False
-                
-            # Test the model with a dummy input to validate it works
+            
+            # Verify model works with dummy input
             try:
-                dummy_input = np.random.rand(1, 224, 224, 3)
+                dummy_input = np.random.rand(1, 224, 224, 3).astype(np.float32)
                 _ = st.session_state.model.predict(dummy_input, verbose=0)
                 st.success("Model validation passed")
             except Exception as e:
-                st.error(f"Model validation failed: {e}")
+                st.error(f"Model validation failed: {str(e)}")
                 return False
                 
     except Exception as e:
@@ -201,18 +227,13 @@ def initialize_models():
         st.session_state.camera_on = False
         return False
 
+    # Load class names
     try:
-        # Load class names
         if st.session_state.class_names is None:
-            if os.path.exists('class_names.npy'):
-                st.session_state.class_names = np.load('class_names.npy', allow_pickle=True).tolist()
-                st.sidebar.write(f"Classes: {', '.join(st.session_state.class_names)}")
-            else:
-                st.error("Class names file not found")
-                return False
+            st.session_state.class_names = np.load('class_names.npy', allow_pickle=True).tolist()
+            st.sidebar.write(f"Classes: {', '.join(st.session_state.class_names)}")
     except Exception as e:
         st.error(f"Error loading class names: {e}")
-        st.session_state.camera_on = False
         return False
 
     # Initialize MediaPipe Hands
@@ -226,6 +247,32 @@ def initialize_models():
         )
 
     return True
+
+
+def create_model_architecture():
+    """
+    Create a compatible model architecture that matches your training
+    """
+    base_model = tf.keras.applications.EfficientNetB0(
+        input_shape=(224, 224, 3),
+        include_top=False,
+        weights='imagenet',
+        pooling='avg'
+    )
+    base_model.trainable = False
+
+    model = tf.keras.Sequential([
+        tf.keras.layers.Input(shape=(224, 224, 3)),
+        tf.keras.layers.Rescaling(1./255),  # Simple normalization instead of EfficientNet preprocessing
+        base_model,
+        tf.keras.layers.Dropout(0.3),
+        tf.keras.layers.Dense(128, activation='relu'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Dropout(0.2),
+        tf.keras.layers.Dense(10, activation='softmax')  # Adjust based on your class count
+    ])
+    
+    return model
 
 # Image processing functions
 def extract_hand_roi(landmarks, frame_shape):
