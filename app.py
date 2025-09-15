@@ -6,7 +6,7 @@ import tensorflow as tf
 from collections import deque
 import time
 import av
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration,VideoTransformerBase
 
 # Set page configuration
 st.set_page_config(
@@ -339,52 +339,33 @@ def process_frame(frame):
 
     return output_frame
 
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 
-# Main application logic
+class VideoTransformer(VideoTransformerBase):
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        processed_frame = process_frame(img)   # 👈 tumhara gesture recognition code
+        return processed_frame
+
 def main():
-    # Initialize models if not already loaded
     if st.session_state.model is None or st.session_state.class_names is None:
         if not initialize_models():
             st.error("Failed to initialize models. Please check if the model files exist.")
-            st.session_state.camera_on = False
             return
 
-    # Start camera if toggled on
     if st.session_state.camera_on:
-        # Initialize webcam
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            st.error("Could not open webcam")
-            st.session_state.camera_on = False
-            return
-
-        # Set camera resolution for better detection
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
-        # Process frames from webcam
-        while st.session_state.camera_on:
-            # Capture frame-by-frame
-            ret, frame = cap.read()
-            if not ret:
-                st.error("Failed to capture frame")
-                break
-
-            # Process the frame
-            processed_frame = process_frame(frame)
-
-            # Display the processed frame
-            st.session_state.frame_placeholder.image(processed_frame, channels="BGR")
-
-            # Add a small delay to prevent high CPU usage
-            time.sleep(0.01)
-
-        # Release the camera when stopped
-        cap.release()
+        webrtc_streamer(
+            key="gesture",
+            mode=WebRtcMode.LIVE,
+            video_transformer_factory=VideoTransformer,
+            rtc_configuration={
+                "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+            }
+        )
     else:
-        # Display placeholder when camera is off
-        st.session_state.frame_placeholder.image(np.zeros((480, 640, 3), dtype=np.uint8), channels="BGR")
-
+        st.session_state.frame_placeholder.image(
+            np.zeros((480, 640, 3), dtype=np.uint8), channels="BGR"
+        )
 
 # Run the main function
 if __name__ == "__main__":
