@@ -354,14 +354,14 @@ def main():
             return
 
     if st.session_state.camera_on:
-        webrtc_streamer(
-            key="gesture",
-            mode=WebRtcMode.LIVE,
-            video_transformer_factory=VideoTransformer,
-            rtc_configuration={
-                "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
-            }
-        )
+       webrtc_streamer(
+    key="gesture",
+    video_transformer_factory=VideoTransformer,
+    rtc_configuration={
+        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"}]}
+    },
+    media_stream_constraints={"video": True, "audio": False},
+)
     else:
         st.session_state.frame_placeholder.image(
             np.zeros((480, 640, 3), dtype=np.uint8), channels="BGR"
