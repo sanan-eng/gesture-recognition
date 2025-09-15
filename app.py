@@ -7,6 +7,7 @@ from collections import deque
 import time
 import av
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+import os
 
 # Set page configuration
 st.set_page_config(
@@ -102,31 +103,99 @@ with col1:
         st.subheader("Debug View")
         debug_placeholder = st.empty()
 
-# with col2:
-#     st.subheader("Recognition Results")
-#     st.markdown(f'<p class="big-font">Gesture: {st.session_state.current_gesture}</p>',
-#                 unsafe_allow_html=True)
-#     st.markdown(f'<p class="confidence-text">Confidence: {st.session_state.current_confidence:.2f}</p>',
-#                 unsafe_allow_html=True)
-#
-#     # Display prediction history
-#     st.subheader("Prediction History")
-#     if st.session_state.prediction_history:
-#         history_text = ""
-#         for gesture, confidence in list(st.session_state.prediction_history)[-5:]:
-#             history_text += f"{gesture} ({confidence:.2f})\n"
-#         st.text(history_text)
-#     else:
-#         st.text("No predictions yet")
+with col2:
+    st.subheader("Recognition Results")
+    st.markdown(f'<p class="big-font">Gesture: {st.session_state.current_gesture}</p>',
+                unsafe_allow_html=True)
+    st.markdown(f'<p class="confidence-text">Confidence: {st.session_state.current_confidence:.2f}</p>',
+                unsafe_allow_html=True)
 
+    # Display prediction history
+    st.subheader("Prediction History")
+    if st.session_state.prediction_history:
+        history_text = ""
+        for gesture, confidence in list(st.session_state.prediction_history)[-5:]:
+            history_text += f"{gesture} ({confidence:.2f})\n"
+        st.text(history_text)
+    else:
+        st.text("No predictions yet")
 
-# Initialize MediaPipe and model
+# Model loading functions
+def create_model_architecture(input_shape=(224, 224, 3), num_classes=10):
+    """
+    Create the model architecture - you need to update this to match your actual model
+    """
+    model = tf.keras.Sequential([
+        tf.keras.layers.InputLayer(input_shape=input_shape),
+        tf.keras.layers.Rescaling(1./255),  # Standard normalization
+        tf.keras.layers.Conv2D(32, (3, 3), activation='relu'),
+        tf.keras.layers.MaxPooling2D((2, 2)),
+        tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+        tf.keras.layers.MaxPooling2D((2, 2)),
+        tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.Dense(num_classes, activation='softmax')
+    ])
+    
+    return model
+
+def load_model_with_retry(model_path):
+    """Try multiple approaches to load the model"""
+    try:
+        # Try loading the complete model first
+        model = tf.keras.models.load_model(model_path, compile=False)
+        st.success("Model loaded successfully with standard method")
+        return model
+    except Exception as e:
+        st.warning(f"Standard loading failed: {e}")
+        
+        try:
+            # Try loading as a SavedModel
+            model = tf.keras.models.load_model(model_path + '_savedmodel', compile=False)
+            st.success("Model loaded successfully as SavedModel")
+            return model
+        except:
+            st.warning("SavedModel loading also failed")
+            
+        try:
+            # Try loading weights only - you need to create the architecture first
+            st.info("Attempting to load weights only - creating model architecture")
+            model = create_model_architecture()
+            weights_path = model_path.replace('.keras', '_weights.weights.h5')
+            model.load_weights(weights_path)
+            st.success("Model weights loaded successfully")
+            return model
+        except Exception as e2:
+            st.error(f"Weights loading failed: {e2}")
+            return None
+
 def initialize_models():
     try:
-        # Load the trained model
+        # Load the trained model with retry mechanism
         if st.session_state.model is None:
-            st.session_state.model = tf.keras.models.load_model('gesture_model.keras')
-            st.success("Model loaded successfully")
+            model_path = 'gesture_model.keras'
+            
+            # Check if model file exists
+            if not os.path.exists(model_path):
+                st.error(f"Model file '{model_path}' not found")
+                return False
+                
+            st.session_state.model = load_model_with_retry(model_path)
+            
+            if st.session_state.model is None:
+                st.error("All model loading attempts failed")
+                return False
+                
+            # Test the model with a dummy input to validate it works
+            try:
+                dummy_input = np.random.rand(1, 224, 224, 3)
+                _ = st.session_state.model.predict(dummy_input, verbose=0)
+                st.success("Model validation passed")
+            except Exception as e:
+                st.error(f"Model validation failed: {e}")
+                return False
+                
     except Exception as e:
         st.error(f"Error loading model: {e}")
         st.session_state.camera_on = False
@@ -135,8 +204,12 @@ def initialize_models():
     try:
         # Load class names
         if st.session_state.class_names is None:
-            st.session_state.class_names = np.load('class_names.npy', allow_pickle=True).tolist()
-            st.sidebar.write(f"Classes: {', '.join(st.session_state.class_names)}")
+            if os.path.exists('class_names.npy'):
+                st.session_state.class_names = np.load('class_names.npy', allow_pickle=True).tolist()
+                st.sidebar.write(f"Classes: {', '.join(st.session_state.class_names)}")
+            else:
+                st.error("Class names file not found")
+                return False
     except Exception as e:
         st.error(f"Error loading class names: {e}")
         st.session_state.camera_on = False
@@ -153,7 +226,6 @@ def initialize_models():
         )
 
     return True
-
 
 # Image processing functions
 def extract_hand_roi(landmarks, frame_shape):
@@ -190,7 +262,6 @@ def extract_hand_roi(landmarks, frame_shape):
 
     return (x_min, y_min, x_max, y_max)
 
-
 def preprocess_hand_roi(roi, img_size=(224, 224)):
     """Preprocess the hand ROI for model prediction"""
     if roi.size == 0:
@@ -200,11 +271,11 @@ def preprocess_hand_roi(roi, img_size=(224, 224)):
     resized = cv2.resize(roi, img_size)
 
     # Apply the same preprocessing as during training
-    processed = tf.keras.applications.efficientnet.preprocess_input(resized)
+    # Using standard normalization instead of EfficientNet preprocessing
+    processed = resized.astype(np.float32) / 255.0
 
     # Add batch dimension
     return np.expand_dims(processed, axis=0)
-
 
 def debug_display_roi(roi, gesture_label, confidence):
     """Display the processed ROI for debugging"""
@@ -215,7 +286,6 @@ def debug_display_roi(roi, gesture_label, confidence):
                     (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
         return debug_img
     return None
-
 
 # Process each frame
 def process_frame(frame):
@@ -323,8 +393,7 @@ def process_frame(frame):
             # Only update if we have a clear majority
             if most_frequent[1] >= len(st.session_state.prediction_history) * 0.6:  # 60% majority
                 st.session_state.current_gesture = most_frequent[0]
-                st.session_state.current_confidence = confidence_sums[st.session_state.current_gesture] / most_frequent[
-                    1]
+                st.session_state.current_confidence = confidence_sums[st.session_state.current_gesture] / most_frequent[1]
 
     # Display the recognized gesture on the frame
     cv2.putText(output_frame, f"Gesture: {st.session_state.current_gesture}", (10, 30),
@@ -338,7 +407,6 @@ def process_frame(frame):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
     return output_frame
-
 
 # Main application logic
 def main():
@@ -384,7 +452,6 @@ def main():
     else:
         # Display placeholder when camera is off
         st.session_state.frame_placeholder.image(np.zeros((480, 640, 3), dtype=np.uint8), channels="BGR")
-
 
 # Run the main function
 if __name__ == "__main__":
